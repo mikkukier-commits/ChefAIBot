@@ -77,7 +77,7 @@ def load_recipes():
         df = conn.read(ttl="1m")
 
         if df is None or df.empty:
-            st.error("Google Sheets не містить рецептів.")
+            st.error("База даних не містить рецептів.")
             return pd.DataFrame()
 
         # Normalize column names
@@ -129,7 +129,7 @@ def load_recipes():
 
     except Exception as e:
         st.error(
-            f"Не вдалося завантажити рецепти з Google Sheets: {e}"
+            f"Не вдалося завантажити рецепти з Бази даних: {e}"
         )
         return pd.DataFrame()
 
