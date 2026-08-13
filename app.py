@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 import os
 import certifi
+import time
 
 
 # =========================================================
@@ -17,14 +18,12 @@ MAX_REQUESTS_PER_SESSION = 20
 MAX_MESSAGE_LENGTH = 1000
 MAX_CONTEXT_MESSAGES = 20
 
-
 # =========================================================
 # SSL CONFIGURATION
 # =========================================================
 
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
-
 
 # =========================================================
 # PAGE CONFIGURATION
@@ -36,7 +35,6 @@ st.set_page_config(
     layout="centered"
 )
 
-
 # =========================================================
 # HEADER
 # =========================================================
@@ -44,14 +42,40 @@ st.set_page_config(
 st.title("🍳 ratAItool")
 st.caption("Кулінарний чат-помічник")
 
-
 # =========================================================
-# SESSION LIMITS
+# SESSION STATE
 # =========================================================
 
 if "request_count" not in st.session_state:
     st.session_state.request_count = 0
 
+if "messages" not in st.session_state:
+    st.session_state.messages = [
+        {
+            "role": "assistant",
+            "content": (
+                "Привіт! Я ratAItool, кулінарний "
+                "чат-помічник. Чим я можу сьогодні допомогти?"
+            )
+        }
+    ]
+
+# Debugger data
+if "debug_data" not in st.session_state:
+    st.session_state.debug_data = {
+        "last_response_time": None,
+        "total_response_time": 0.0,
+        "last_input_tokens": None,
+        "last_output_tokens": None,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "last_prompt_length": 0,
+        "last_response_length": 0,
+        "last_error": None,
+        "last_request": None,
+        "database_status": "Не перевірено",
+        "recipe_count": 0,
+    }
 
 # =========================================================
 # GOOGLE SHEETS DATABASE
@@ -77,7 +101,6 @@ def load_recipes():
         df = conn.read(ttl="1m")
 
         if df is None or df.empty:
-            st.error("База даних не містить рецептів.")
             return pd.DataFrame()
 
         # Normalize column names
@@ -101,10 +124,6 @@ def load_recipes():
         ]
 
         if missing_columns:
-            st.error(
-                "У Google Sheets відсутні необхідні колонки: "
-                + ", ".join(missing_columns)
-            )
             return pd.DataFrame()
 
         # Replace NaN values
@@ -127,14 +146,235 @@ def load_recipes():
 
         return df
 
-    except Exception as e:
-        st.error(
-            f"Не вдалося завантажити рецепти з Бази даних: {e}"
-        )
+    except Exception:
         return pd.DataFrame()
 
 
+# =========================================================
+# LOAD DATABASE
+# =========================================================
+
 recipes_df = load_recipes()
+
+if recipes_df.empty:
+    st.session_state.debug_data["database_status"] = (
+        "Помилка / порожня база"
+    )
+    st.session_state.debug_data["recipe_count"] = 0
+else:
+    st.session_state.debug_data["database_status"] = (
+        "Підключено"
+    )
+    st.session_state.debug_data["recipe_count"] = len(recipes_df)
+
+
+# =========================================================
+# SIDEBAR DEBUGGER
+# =========================================================
+
+with st.sidebar:
+
+    st.header("Debugger")
+
+    st.caption(
+        "Дані доступні тільки для поточної Streamlit-сесії."
+    )
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # SESSION
+    # -----------------------------------------------------
+
+    st.subheader("Session")
+
+    st.metric(
+        "AI-запити",
+        f"{st.session_state.request_count}/{MAX_REQUESTS_PER_SESSION}"
+    )
+
+    st.metric(
+        "Повідомлень у контексті",
+        len(st.session_state.messages)
+    )
+
+    # -----------------------------------------------------
+    # DATABASE
+    # -----------------------------------------------------
+
+    st.subheader("Google Sheets")
+
+    st.write(
+        f"**Статус:** "
+        f"{st.session_state.debug_data['database_status']}"
+    )
+
+    st.write(
+        f"**Рецептів:** "
+        f"{st.session_state.debug_data['recipe_count']}"
+    )
+
+    # -----------------------------------------------------
+    # TOKEN USAGE
+    # -----------------------------------------------------
+
+    st.subheader("Token usage")
+
+    input_tokens = st.session_state.debug_data[
+        "last_input_tokens"
+    ]
+
+    output_tokens = st.session_state.debug_data[
+        "last_output_tokens"
+    ]
+
+    total_input_tokens = st.session_state.debug_data[
+        "total_input_tokens"
+    ]
+
+    total_output_tokens = st.session_state.debug_data[
+        "total_output_tokens"
+    ]
+
+    if input_tokens is None:
+        st.write("**Останній input:** N/A")
+    else:
+        st.write(
+            f"**Останній input:** {input_tokens:,}"
+        )
+
+    if output_tokens is None:
+        st.write("**Останній output:** N/A")
+    else:
+        st.write(
+            f"**Останній output:** {output_tokens:,}"
+        )
+
+    st.write(
+        f"**Всього input:** {total_input_tokens:,}"
+    )
+
+    st.write(
+        f"**Всього output:** {total_output_tokens:,}"
+    )
+
+    total_tokens = (
+        total_input_tokens
+        + total_output_tokens
+    )
+
+    st.metric(
+        "Всього токенів",
+        f"{total_tokens:,}"
+    )
+
+    # -----------------------------------------------------
+    # PERFORMANCE
+    # -----------------------------------------------------
+
+    st.subheader("Performance")
+
+    response_time = st.session_state.debug_data[
+        "last_response_time"
+    ]
+
+    if response_time is not None:
+        st.write(
+            f"**Остання відповідь:** "
+            f"{response_time:.2f} сек."
+        )
+    else:
+        st.write(
+            "**Остання відповідь:** N/A"
+        )
+
+    total_time = st.session_state.debug_data[
+        "total_response_time"
+    ]
+
+    st.write(
+        f"**Сумарний час:** {total_time:.2f} сек."
+    )
+
+    # -----------------------------------------------------
+    # PROMPT
+    # -----------------------------------------------------
+
+    st.subheader("Last request")
+
+    last_request = st.session_state.debug_data[
+        "last_request"
+    ]
+
+    if last_request:
+        st.write(
+            f"**Довжина запиту:** "
+            f"{len(last_request)} символів"
+        )
+
+        with st.expander("Показати запит"):
+            st.write(last_request)
+
+    # -----------------------------------------------------
+    # RESPONSE
+    # -----------------------------------------------------
+
+    st.subheader("Last response")
+
+    response_length = st.session_state.debug_data[
+        "last_response_length"
+    ]
+
+    st.write(
+        f"**Довжина відповіді:** "
+        f"{response_length} символів"
+    )
+
+    # -----------------------------------------------------
+    # ERROR
+    # -----------------------------------------------------
+
+    last_error = st.session_state.debug_data[
+        "last_error"
+    ]
+
+    if last_error:
+
+        st.subheader("Last error")
+
+        st.error(last_error)
+
+    # -----------------------------------------------------
+    # RESET
+    # -----------------------------------------------------
+
+    st.divider()
+
+    if st.button(
+        "Очистити debugger",
+        use_container_width=True
+    ):
+
+        st.session_state.debug_data = {
+            "last_response_time": None,
+            "total_response_time": 0.0,
+            "last_input_tokens": None,
+            "last_output_tokens": None,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "last_prompt_length": 0,
+            "last_response_length": 0,
+            "last_error": None,
+            "last_request": None,
+            "database_status": (
+                "Підключено"
+                if not recipes_df.empty
+                else "Помилка / порожня база"
+            ),
+            "recipe_count": len(recipes_df),
+        }
+
+        st.rerun()
 
 
 # =========================================================
@@ -190,20 +430,6 @@ def recipe_search(query: str) -> str:
     - lactose-free recipes
     - gluten-free recipes
     - recipes satisfying both restrictions
-
-    Examples:
-    - "борщ"
-    - "паста"
-    - "запечені яблука"
-    - "без лактози"
-    - "без глютену"
-    - "без лактози та без глютену"
-
-    Args:
-        query: Recipe name or dietary requirement.
-
-    Returns:
-        Matching recipes or NOT_FOUND.
     """
 
     if recipes_df.empty:
@@ -259,7 +485,9 @@ def recipe_search(query: str) -> str:
         results = []
 
         for _, row in filtered_df.iterrows():
-            results.append(format_recipe(row))
+            results.append(
+                format_recipe(row)
+            )
 
         return (
             f"Знайдено рецептів: {len(results)}\n\n"
@@ -275,8 +503,12 @@ def recipe_search(query: str) -> str:
     for _, row in recipes_df.iterrows():
 
         name = normalize_text(row["name"])
-        ingredients = normalize_text(row["ingredients"])
-        description = normalize_text(row["description"])
+        ingredients = normalize_text(
+            row["ingredients"]
+        )
+        description = normalize_text(
+            row["description"]
+        )
 
         search_text = (
             f"{name} "
@@ -285,7 +517,9 @@ def recipe_search(query: str) -> str:
         )
 
         if q in search_text:
-            results.append(format_recipe(row))
+            results.append(
+                format_recipe(row)
+            )
 
     if not results:
         return "NOT_FOUND"
@@ -309,14 +543,12 @@ def calculate_recipe_portions(
     """
     Calculates a new ingredient amount for a different
     number of portions.
-
-    Args:
-        original_portions: Original number of portions.
-        desired_portions: Desired number of portions.
-        ingredient_amount: Original ingredient amount.
     """
 
-    if original_portions <= 0 or desired_portions <= 0:
+    if (
+        original_portions <= 0
+        or desired_portions <= 0
+    ):
         return (
             "Помилка: кількість порцій повинна бути "
             "більшою за 0."
@@ -360,7 +592,8 @@ instructions = [
     """
     ВАЖЛИВО:
 
-    Google Sheets є ЄДИНИМ джерелом рецептів у базі даних.
+    Google Sheets є ЄДИНИМ джерелом рецептів
+    у базі даних.
 
     НЕ ВИГАДУЙ рецепти.
 
@@ -374,8 +607,9 @@ instructions = [
     Якщо користувач просить конкретний рецепт,
     обов'язково використовуй recipe_search.
 
-    Якщо користувач просить рецепт за дієтичними критеріями,
-    також обов'язково використовуй recipe_search.
+    Якщо користувач просить рецепт за дієтичними
+    критеріями, також обов'язково використовуй
+    recipe_search.
 
     Наприклад:
 
@@ -391,11 +625,13 @@ instructions = [
     """
     КОНТЕКСТ:
 
-    ОБОВ'ЯЗКОВО використовуй історію поточної розмови.
+    ОБОВ'ЯЗКОВО використовуй історію
+    поточної розмови.
 
     Якщо користувач спочатку сказав:
 
-    "Мені потрібна страва без лактози та без глютену."
+    "Мені потрібна страва без лактози
+    та без глютену."
 
     а потім:
 
@@ -403,7 +639,8 @@ instructions = [
 
     це означає:
 
-    "Знайди будь-яку страву без лактози та без глютену."
+    "Знайди будь-яку страву без лактози
+    та без глютену."
 
     НЕ ВТРАЧАЙ попередні критерії.
     """,
@@ -434,13 +671,16 @@ instructions = [
 
     Скажи:
 
-    "На жаль, у моїй базі даних немає рецепту, який відповідає цим критеріям. Бажаєте, щоб я пошукав його в інтернеті?"
+    "На жаль, у моїй базі даних немає рецепту,
+    який відповідає цим критеріям.
+    Бажаєте, щоб я пошукав його в інтернеті?"
 
     НЕ використовуй Tavily без явного підтвердження.
     """,
 
     """
-    Якщо користувач явно погоджується на пошук в інтернеті:
+    Якщо користувач явно погоджується
+    на пошук в інтернеті:
 
     "так"
     "давай"
@@ -449,11 +689,13 @@ instructions = [
 
     можна використовувати TavilyTools.
 
-    Але використовуй його тільки після явного підтвердження.
+    Але використовуй його тільки після
+    явного підтвердження.
     """,
 
     """
-    Якщо користувач задає питання, яке не стосується:
+    Якщо користувач задає питання,
+    яке не стосується:
 
     - кулінарії;
     - рецептів;
@@ -463,12 +705,16 @@ instructions = [
 
     відповідай:
 
-    "Я кулінарний чат-помічник ratAItool і спеціалізуюся на питаннях, пов'язаних із кулінарією, рецептами та харчуванням. На жаль, я не можу допомогти з цим питанням."
+    "Я кулінарний чат-помічник ratAItool
+    і спеціалізуюся на питаннях, пов'язаних
+    із кулінарією, рецептами та харчуванням.
+    На жаль, я не можу допомогти з цим питанням."
     """,
 
     """
     Якщо користувач повідомляє своє ім'я,
-    можеш використовувати його в подальшій розмові.
+    можеш використовувати його в подальшій
+    розмові.
 
     Не вимагай від користувача повідомляти ім'я.
     """
@@ -485,7 +731,7 @@ if "chef_agent" not in st.session_state:
         name="ratAItool",
 
         model=Gemini(
-            id="gemini-3.5-flash-lite"
+            id="gemini-3.1-flash-lite"
         ),
 
         tools=[
@@ -498,23 +744,6 @@ if "chef_agent" not in st.session_state:
 
         markdown=True
     )
-
-
-# =========================================================
-# CHAT HISTORY
-# =========================================================
-
-if "messages" not in st.session_state:
-
-    st.session_state.messages = [
-        {
-            "role": "assistant",
-            "content": (
-                "Привіт! Я ratAItool, кулінарний "
-                "чат-помічник. Чим я можу сьогодні допомогти?"
-            )
-        }
-    ]
 
 
 # =========================================================
@@ -559,13 +788,117 @@ def build_conversation_context():
 
 
 # =========================================================
+# TOKEN / USAGE EXTRACTION
+# =========================================================
+
+def extract_usage(response):
+    """
+    Tries to extract token usage from an Agno response.
+
+    Returns:
+        input_tokens, output_tokens
+    """
+
+    input_tokens = None
+    output_tokens = None
+
+    try:
+
+        metrics = getattr(
+            response,
+            "metrics",
+            None
+        )
+
+        if metrics:
+
+            if isinstance(metrics, dict):
+
+                input_tokens = (
+                    metrics.get("input_tokens")
+                    or metrics.get("prompt_tokens")
+                )
+
+                output_tokens = (
+                    metrics.get("output_tokens")
+                    or metrics.get("completion_tokens")
+                )
+
+            else:
+
+                input_tokens = getattr(
+                    metrics,
+                    "input_tokens",
+                    None
+                )
+
+                if input_tokens is None:
+                    input_tokens = getattr(
+                        metrics,
+                        "prompt_tokens",
+                        None
+                    )
+
+                output_tokens = getattr(
+                    metrics,
+                    "output_tokens",
+                    None
+                )
+
+                if output_tokens is None:
+                    output_tokens = getattr(
+                        metrics,
+                        "completion_tokens",
+                        None
+                    )
+
+    except Exception:
+        pass
+
+    # Try response-level attributes
+    if input_tokens is None:
+        try:
+            input_tokens = getattr(
+                response,
+                "input_tokens",
+                None
+            )
+        except Exception:
+            pass
+
+    if output_tokens is None:
+        try:
+            output_tokens = getattr(
+                response,
+                "output_tokens",
+                None
+            )
+        except Exception:
+            pass
+
+    # Convert to int where possible
+    try:
+        if input_tokens is not None:
+            input_tokens = int(input_tokens)
+    except Exception:
+        input_tokens = None
+
+    try:
+        if output_tokens is not None:
+            output_tokens = int(output_tokens)
+    except Exception:
+        output_tokens = None
+
+    return input_tokens, output_tokens
+
+
+# =========================================================
 # USER INPUT
 # =========================================================
 
 prompt = st.chat_input(
     "Напишіть ваше питання..."
 )
-
 
 if prompt:
 
@@ -626,10 +959,28 @@ if prompt:
     st.session_state.request_count += 1
 
     # =====================================================
+    # SAVE DEBUG REQUEST
+    # =====================================================
+
+    st.session_state.debug_data[
+        "last_request"
+    ] = prompt
+
+    st.session_state.debug_data[
+        "last_prompt_length"
+    ] = len(prompt)
+
+    st.session_state.debug_data[
+        "last_error"
+    ] = None
+
+    # =====================================================
     # BUILD CONTEXT
     # =====================================================
 
-    conversation_context = build_conversation_context()
+    conversation_context = (
+        build_conversation_context()
+    )
 
     # =====================================================
     # BUILD AGENT PROMPT
@@ -638,7 +989,8 @@ if prompt:
     agent_prompt = f"""
 Нижче наведена історія поточної розмови.
 
-ОБОВ'ЯЗКОВО використовуй її для розуміння контексту.
+ОБОВ'ЯЗКОВО використовуй її для
+розуміння контексту.
 
 Особливо звертай увагу на:
 
@@ -648,7 +1000,8 @@ if prompt:
 - уподобання;
 - займенники;
 - фрази "будь-яку", "так", "давай";
-- фрази "цей рецепт", "ця страва", "вона", "він".
+- фрази "цей рецепт", "ця страва",
+  "вона", "він".
 
 ================ ІСТОРІЯ РОЗМОВИ ================
 
@@ -669,8 +1022,8 @@ if prompt:
 використовуй recipe_search.
 
 Якщо користувач посилається на рецепт,
-який вже був знайдений у попередніх повідомленнях,
-використовуй саме цей контекст.
+який вже був знайдений у попередніх
+повідомленнях, використовуй саме цей контекст.
 
 Не вимагай від користувача повторно
 називати рецепт, якщо він очевидний
@@ -685,6 +1038,8 @@ if prompt:
 
         with st.spinner("🧠 Думаю..."):
 
+            start_time = time.perf_counter()
+
             try:
 
                 response = (
@@ -693,13 +1048,80 @@ if prompt:
                     .run(agent_prompt)
                 )
 
+                elapsed_time = (
+                    time.perf_counter()
+                    - start_time
+                )
+
                 response_text = response.content
+
+                # -------------------------------------------------
+                # Extract token usage
+                # -------------------------------------------------
+
+                (
+                    input_tokens,
+                    output_tokens
+                ) = extract_usage(response)
+
+                st.session_state.debug_data[
+                    "last_input_tokens"
+                ] = input_tokens
+
+                st.session_state.debug_data[
+                    "last_output_tokens"
+                ] = output_tokens
+
+                if input_tokens is not None:
+                    st.session_state.debug_data[
+                        "total_input_tokens"
+                    ] += input_tokens
+
+                if output_tokens is not None:
+                    st.session_state.debug_data[
+                        "total_output_tokens"
+                    ] += output_tokens
+
+                # -------------------------------------------------
+                # Performance
+                # -------------------------------------------------
+
+                st.session_state.debug_data[
+                    "last_response_time"
+                ] = elapsed_time
+
+                st.session_state.debug_data[
+                    "total_response_time"
+                ] += elapsed_time
+
+                st.session_state.debug_data[
+                    "last_response_length"
+                ] = len(response_text)
 
             except Exception as e:
 
+                elapsed_time = (
+                    time.perf_counter()
+                    - start_time
+                )
+
+                error_text = str(e)
+
+                st.session_state.debug_data[
+                    "last_error"
+                ] = error_text
+
+                st.session_state.debug_data[
+                    "last_response_time"
+                ] = elapsed_time
+
+                st.session_state.debug_data[
+                    "total_response_time"
+                ] += elapsed_time
+
                 response_text = (
                     "Виникла помилка під час роботи "
-                    f"чат-помічника: {e}"
+                    f"чат-помічника: {error_text}"
                 )
 
             st.markdown(response_text)
@@ -714,6 +1136,12 @@ if prompt:
             "content": response_text
         }
     )
+
+    # =====================================================
+    # REFRESH SIDEBAR DEBUGGER
+    # =====================================================
+
+    st.rerun()
 
 
 # =========================================================
