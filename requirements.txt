@@ -1,0 +1,7 @@
+streamlit
+st-gsheets-connection
+agno
+google-genai
+tavily-python
+pandas
+certifi
