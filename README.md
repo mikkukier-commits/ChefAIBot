@@ -598,5 +598,18 @@ Gemini Agent
 - аналітика популярних рецептів;
 - окремий production database замість Google Sheets.
 
+---
+
 # Database
-https://docs.google.com/spreadsheets/d/18lm6RKN1Itm_ilXtjrmnRZCNLhBVYnLqxRklb6hQ8WM/edit?gid=0#gid=0
+https://tinyurl.com/2d4dvdpb
+
+---
+
+# ratAItool in Streamlit
+https://chefaibot.streamlit.app/
+
+---
+
+# Presentation
+https://tinyurl.com/y46hsbvc
+
