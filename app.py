@@ -731,7 +731,7 @@ if "chef_agent" not in st.session_state:
         name="ratAItool",
 
         model=Gemini(
-            id="gemini-3.1-flash-lite"
+            id="gemini-3.5-flash-lite"
         ),
 
         tools=[
