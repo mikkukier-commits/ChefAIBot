@@ -597,3 +597,6 @@ Gemini Agent
 - rate limiting на рівні користувача;
 - аналітика популярних рецептів;
 - окремий production database замість Google Sheets.
+
+# Database
+https://docs.google.com/spreadsheets/d/18lm6RKN1Itm_ilXtjrmnRZCNLhBVYnLqxRklb6hQ8WM/edit?gid=0#gid=0
